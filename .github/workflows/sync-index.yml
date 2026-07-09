@@ -1,0 +1,73 @@
+name: Sync index.html <-> docs/index.html
+
+# Keeps the repo-root index.html and docs/index.html (the file GitHub Pages
+# actually serves) identical. Whichever one you edit and push to `main`,
+# this workflow copies it over the other one automatically.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "docs/index.html"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-index-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Determine which file changed and sync it to the other
+        id: sync
+        run: |
+          set -e
+
+          ROOT_CHANGED=false
+          DOCS_CHANGED=false
+
+          if git diff --name-only HEAD~1 HEAD | grep -qx "index.html"; then
+            ROOT_CHANGED=true
+          fi
+          if git diff --name-only HEAD~1 HEAD | grep -qx "docs/index.html"; then
+            DOCS_CHANGED=true
+          fi
+
+          if [ "$ROOT_CHANGED" = "true" ] && [ "$DOCS_CHANGED" = "true" ]; then
+            echo "Both files changed in this push — nothing to sync automatically."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif [ "$ROOT_CHANGED" = "true" ]; then
+            echo "index.html changed — copying it to docs/index.html"
+            mkdir -p docs
+            cp index.html docs/index.html
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$DOCS_CHANGED" = "true" ]; then
+            echo "docs/index.html changed — copying it to index.html"
+            cp docs/index.html index.html
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No relevant change detected."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push if needed
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Files already identical, nothing to commit."
+          else
+            git add index.html docs/index.html
+            git commit -m "chore: auto-sync index.html and docs/index.html [skip ci]"
+            git push
+          fi
